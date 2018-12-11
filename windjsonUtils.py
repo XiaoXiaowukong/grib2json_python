@@ -3,6 +3,9 @@ __version__ = '$Id: windjsonUtils.py 27349 2018-11-29 18:58:51Z rouault $'
 import numpy as np
 import os
 import json
+from osgeo import gdal, ogr
+from umOpener.openUtils import OpenUtils
+import time
 
 
 class WindJsonUtil():
@@ -20,11 +23,19 @@ class WindJsonUtil():
         self.v_lat = v_lat
         self.v_lon = v_lon
         self.v_data = v_data
+        print self.u_lat.shape
+        print self.u_lon.shape
+        print self.u_data.shape
+        self.grid_width = 120
+        self.grid_height = 120
         arguments = []
         for kwarg_key in kwgs.keys():
             arguments.append("--%s" % kwarg_key)
             arguments.append(kwgs[kwarg_key])
         (self.options, self.args) = self.parser.parse_args(args=arguments)
+        self.mid_file = os.path.splitext(self.options.exportFile)[0]
+        self.u_mid_file = '%s_u.tif' % self.mid_file
+        self.v_mid_file = '%s_v.tif' % self.mid_file
         print self.options
         self.process()
 
@@ -54,60 +65,187 @@ class WindJsonUtil():
     # ==================================================================================================
 
     def process(self):
-        # [{"header":{"discipline":0,"disciplineName":"Meteorological products","gribEdition":2,"gribLength":133963,"center":7,"centerName":"US National Weather Service - NCEP(WMC)","subcenter":0,"refTime":"2014-11-30T06:00:00.000Z","significanceOfRT":1,"significanceOfRTName":"Start of forecast","productStatus":0,"productStatusName":"Operational products","productType":1,"productTypeName":"Forecast products","productDefinitionTemplate":0,"productDefinitionTemplateName":"Analysis/forecast at horizontal level/layer at a point in time","parameterCategory":2,"parameterCategoryName":"Momentum","parameterNumber":2,"parameterNumberName":"U-component_of_wind","parameterUnit":"m.s-1","genProcessType":2,"genProcessTypeName":"Forecast","forecastTime":6,"surface1Type":100,"surface1TypeName":"Isobaric surface","surface1Value":85000,"surface2Type":255,"surface2TypeName":"Missing","surface2Value":0,"gridDefinitionTemplate":0,"gridDefinitionTemplateName":"Latitude_Longitude","numberPoints":65160,"shape":6,"shapeName":"Earth spherical with radius of 6,371,229.0 m","gridUnits":"degrees","resolution":48,"winds":"true","scanMode":0,"nx":360,"ny":181,"basicAngle":0,"subDivisions":0,"lo1":0,"la1":90,"lo2":359,"la2":-90,"dx":1,"dy":1},"data":[3.88
-        # "lo1":0, "la1":90, "lo2":359, "la2":-90
-        # ,{"header":{"discipline":0,"disciplineName":"Meteorological products","gribEdition":2,"gribLength":133963,"center":7,"centerName":"US National Weather Service - NCEP(WMC)","subcenter":0,"refTime":"2014-11-30T06:00:00.000Z","significanceOfRT":1,"significanceOfRTName":"Start of forecast","productStatus":0,"productStatusName":"Operational products","productType":1,"productTypeName":"Forecast products","productDefinitionTemplate":0,"productDefinitionTemplateName":"Analysis/forecast at horizontal level/layer at a point in time","parameterCategory":2,"parameterCategoryName":"Momentum","parameterNumber":3,"parameterNumberName":"V-component_of_wind","parameterUnit":"m.s-1","genProcessType":2,"genProcessTypeName":"Forecast","forecastTime":6,"surface1Type":100,"surface1TypeName":"Isobaric surface","surface1Value":85000,"surface2Type":255,"surface2TypeName":"Missing","surface2Value":0,"gridDefinitionTemplate":0,"gridDefinitionTemplateName":"Latitude_Longitude","numberPoints":65160,"shape":6,"shapeName":"Earth spherical with radius of 6,371,229.0 m","gridUnits":"degrees","resolution":48,"winds":"true","scanMode":0,"nx":360,"ny":181,"basicAngle":0,"subDivisions":0,"lo1":0,"la1":90,"lo2":359,"la2":-90,"dx":1,"dy":1}
-        # U
-        u_windJson = {}
-        u_header = {}
-        u_header["nx"] = int(self.u_data.shape[1])
-        u_header["ny"] = int(self.u_data.shape[2])
-        u_header["lo1"] = float(min(self.u_lon))
-        u_header["lo2"] = float(max(self.u_lon))
-        u_header["la1"] = float(max(self.u_lat))
-        u_header["la2"] = float(min(self.u_lat))
-        u_header["parameterNumberName"] = "U-component_of_wind"
-        u_header["parameterUnit"] = "m.s-1"
-        u_header["parameterCategory"] = 2
-        u_header["numberPoints"] = u_header["nx"] * u_header["ny"]
-        u_header["meta"] = {"date": "2014-11-30T12:00:00.000Z"}
-        u_header["gridDefinitionTemplateName"] = "Latitude_Longitude"
-
-        print min(self.u_lon)
-        print max(self.u_lon)
-        u_windJson["header"] = u_header
-        u_wind_data = self.u_data[0].flatten()
-        u_windJson["data"] = u_wind_data.tolist()
-
-        # V
-        v_windJson = {}
-        v_header = {}
-        v_header["nx"] = int(self.u_data.shape[1])
-        v_header["ny"] = int(self.u_data.shape[2])
-        v_header["lo1"] = float(min(self.u_lon))
-        v_header["lo2"] = float(max(self.u_lon))
-        v_header["la1"] = float(max(self.u_lat))
-        v_header["la2"] = float(min(self.u_lat))
-        v_header["parameterNumberName"] = "V-component_of_wind"
-        v_header["parameterUnit"] = "m.s-1"
-        v_header["parameterCategory"] = 2
-        v_header["numberPoints"] = v_header["nx"] * v_header["ny"]
-        v_header["meta"] = {"date": "2014-11-30T12:00:00.000Z"}
-        v_header["gridDefinitionTemplateName"] = "Latitude_Longitude"
-
-        print min(self.u_lon)
-        print max(self.u_lon)
-        v_windJson["header"] = v_header
-        v_wind_data = self.v_data[0].flatten()
-        v_windJson["data"] = v_wind_data.tolist()
-        windjson = {}
-        windjson["json"] = [u_windJson, v_windJson]
-
-        f = open(self.options.exportFile, "w")
-        f.write(json.dumps(windjson["json"]))
-        f.close()
-        pass
+        print "开始的最大值", np.max(self.u_data)
+        print "开始的最小值", np.min(self.u_data)
+        startTime = time.time()
+        self.makePolygon()
+        makepolygonTime = time.time() - startTime
+        print "makepolygonTime", makepolygonTime
+        startTime = time.time()
+        self.gdal_grid()
+        gdalGridTime = time.time() - startTime
+        print "gdalGridTime", gdalGridTime
+        startTime = time.time()
+        self.makeUVjson()
+        makeuvTime = time.time() - startTime
+        print "makeuvTime", makeuvTime
 
     # ==================================================================================================
     def stop(self):
         self.stopped = True
+
+    def makePolygon(self):
+        lat_maxSize = self.u_lat.__len__()
+        lon_maxSize = self.u_lon.__len__()
+        print "lat_maxSize", lat_maxSize
+        print "lon_maxSize", lon_maxSize
+        u_Wkt = 'POLYGON (('
+        v_Wkt = 'POLYGON (('
+        for index_lat, lat in enumerate(self.u_lat):
+            for index_lon, lon in enumerate(self.u_lon):
+                u_Wkt = u_Wkt + "%s %s %s" % (lon, lat, self.u_data[index_lon, index_lat])
+                v_Wkt = v_Wkt + "%s %s %s" % (lon, lat, self.v_data[index_lon, index_lat])
+
+                if (index_lat + 1 == lat_maxSize and index_lon + 1 == lon_maxSize):
+                    u_Wkt = u_Wkt + "))"
+                    v_Wkt = v_Wkt + "))"
+                else:
+                    u_Wkt = u_Wkt + ","
+                    v_Wkt = v_Wkt + ","
+        self.u_Wkt = u_Wkt
+        self.v_Wkt = v_Wkt
+
+    def gdal_grid(self):
+        u_polygon = ogr.CreateGeometryFromWkt(self.u_Wkt)
+        v_polygon = ogr.CreateGeometryFromWkt(self.v_Wkt)
+        print [np.min(self.u_lon), np.min(self.u_lat), np.max(self.u_lon), np.max(self.u_lat)]
+        print [np.min(self.u_lon), np.min(self.u_lat), np.max(self.u_lon), np.max(self.u_lat)]
+        ds_u = gdal.Grid("", u_polygon.ExportToJson(), \
+                         width=self.grid_width, height=self.grid_height, outputType=gdal.GDT_Float32,
+                         outputSRS='EPSG:4326',
+                         outputBounds=[np.min(self.u_lon), np.min(self.u_lat), np.max(self.u_lon), np.max(self.u_lat)], \
+                         format='MEM', algorithm='nearest', noData=9999.0)
+        cols_u = ds_u.RasterXSize  # 获取文件的列数
+        rows_u = ds_u.RasterYSize  # 获取文件的行数
+        currentBand_u = ds_u.GetRasterBand(1)
+        current_data_u = currentBand_u.ReadAsArray(0, 0, cols_u, rows_u)
+        current_geotransf_u = ds_u.GetGeoTransform()  # 获取放射矩阵
+        (current_lat_u, current_lon_u) = self.createXY(current_geotransf_u, cols_u, rows_u)
+        self.u_lon = current_lon_u
+        self.u_lat = current_lat_u
+        self.u_data = current_data_u[::-1]
+        del ds_u
+        # ===============================
+        ds_v = gdal.Grid("", v_polygon.ExportToJson(), \
+                         width=self.grid_width, height=self.grid_height, outputType=gdal.GDT_Float32,
+                         outputSRS='EPSG:4326',
+                         outputBounds=[np.min(self.u_lon), np.min(self.u_lat), np.max(self.u_lon), np.max(self.u_lat)], \
+                         format='MEM', algorithm='nearest', noData=9999.0)
+        cols_v = ds_v.RasterXSize  # 获取文件的列数
+        rows_v = ds_v.RasterYSize  # 获取文件的行数
+        currentBand_v = ds_v.GetRasterBand(1)
+        current_data_v = currentBand_v.ReadAsArray(0, 0, cols_v, rows_v)
+        current_geotransf_v = ds_v.GetGeoTransform()  # 获取放射矩阵
+        (current_lat_v, current_lon_v) = self.createXY(current_geotransf_v, cols_v, rows_v)
+        self.v_lon = current_lon_v
+        self.v_lat = current_lat_v
+        self.v_data = current_data_v[::-1]
+        del ds_v
+
+    def createXY(self, transform, xSize, ySize):
+        lat = np.linspace(transform[5] * ySize + transform[3], transform[3], ySize)
+        lon = np.linspace(transform[0], transform[1] * xSize + transform[0], xSize)
+        lat = list(lat)
+        lat.reverse()
+        lat = np.asarray(lat)
+        return (lat, lon)
+
+    def read_mid_data(self):
+        myOpenUtils = OpenUtils()
+        myOpenUtils.initParams(
+            self.u_mid_file,
+            file_type="GeoTiff",
+            data_type='float',
+            is_rewirte_data=False,
+            proj="mercator")
+        self.u_lon = myOpenUtils.lons
+        self.u_lat = myOpenUtils.lats
+        self.u_data = myOpenUtils.data
+        print self.u_data
+        print max(self.u_lon), min(self.u_lon)
+        print max(self.u_lat), min(self.u_lat)
+        myOpenUtils.initParams(
+            self.v_mid_file,
+            file_type="GeoTiff",
+            data_type='float',
+            is_rewirte_data=False,
+            proj="mercator")
+        self.v_lon = myOpenUtils.lons
+        self.v_lat = myOpenUtils.lats
+        self.v_data = myOpenUtils.data
+
+        print max(self.v_lon), min(self.v_lon)
+        print max(self.v_lat), min(self.v_lat)
+
+    def makeUVjson(self):
+        dx = float((max(self.u_lon) - min(self.u_lon)) / self.grid_width)
+        dy = float((max(self.u_lat) - min(self.u_lat)) / self.grid_height)
+
+        # U=================================================
+        u_windJson = {}
+        u_header = {}
+        u_header["nx"] = int(self.u_data.shape[0])
+        u_header["ny"] = int(self.u_data.shape[1])
+        u_header["lo1"] = float(min(self.u_lon))
+        u_header["lo2"] = float(max(self.u_lon))
+        u_header["la1"] = float(max(self.u_lat))
+        u_header["la2"] = float(min(self.u_lat))
+        u_header["dx"] = dx
+        u_header["dy"] = dy
+        u_header["gridUnits"] = "degrees"
+
+        u_header["parameterNumberName"] = "U-component_of_wind"
+        u_header["parameterUnit"] = "m.s-1"
+        u_header["parameterCategory"] = 2
+        u_header["parameterNumber"] = 2
+        u_header["numberPoints"] = u_header["nx"] * u_header["ny"]
+        u_header["meta"] = {"date": "2014-11-30T12:00:00.000Z"}
+        u_header["gridDefinitionTemplateName"] = "Latitude_Longitude"
+        u_header["surface2Type"] = 255
+
+        print min(self.u_lon)
+        print max(self.u_lon)
+        u_windJson["header"] = u_header
+        u_wind_data = self.u_data.flatten()
+        u_wind_data_list = []
+        for u_data in u_wind_data:
+            u_wind_data_list.append(str(u_data))
+        print u_wind_data
+        u_windJson["data"] = u_wind_data_list
+
+        # V=====================================================
+        v_windJson = {}
+        v_header = {}
+        v_header["nx"] = int(self.u_data.shape[0])
+        v_header["ny"] = int(self.u_data.shape[1])
+        v_header["lo1"] = float(min(self.u_lon))
+        v_header["lo2"] = float(max(self.u_lon))
+        v_header["la1"] = float(max(self.u_lat))
+        v_header["la2"] = float(min(self.u_lat))
+        v_header["dx"] = dx
+        v_header["dy"] = dy
+        v_header["gridUnits"] = "degrees"
+
+        v_header["parameterNumberName"] = "V-component_of_wind"
+        v_header["parameterUnit"] = "m.s-1"
+        v_header["parameterCategory"] = 2
+        v_header["parameterNumber"] = 3
+        v_header["numberPoints"] = v_header["nx"] * v_header["ny"]
+        v_header["meta"] = {"date": "2014-11-30T12:00:00.000Z"}
+        v_header["gridDefinitionTemplateName"] = "Latitude_Longitude"
+        v_header["surface2Type"] = 255
+
+        v_windJson["header"] = v_header
+        v_wind_data = self.v_data.flatten()
+        v_wind_data_list = []
+        for v_data in v_wind_data:
+            v_wind_data_list.append(str(v_data))
+
+        print v_wind_data
+        v_windJson["data"] = v_wind_data_list
+        # --------
+        windjson = {}
+        windjson["json"] = [u_windJson, v_windJson]
+        f = open(self.options.exportFile, "w")
+        f.write(json.dumps(windjson["json"]))
+        f.close()
