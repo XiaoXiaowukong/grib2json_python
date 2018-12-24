@@ -1,7 +1,7 @@
 # -*- coding:utf-8 -*-
 __version__ = '$Id: windjsonUtils.py 27349 2018-11-29 18:58:51Z rouault $'
 import numpy as np
-import os
+import sys
 import json
 from osgeo import gdal, ogr
 from umOpener.openUtils import OpenUtils
@@ -13,29 +13,28 @@ class WindJsonUtil():
         print "__init__"
 
     # 初始化
-    def initParams(self, u_lat, u_lon, u_data, v_lat, v_lon, v_data, **kwgs):
-        print kwgs
+    def initParams(self, **kwgs):
         self.stopped = False
         self.optparse_init()
-        self.u_lat = u_lat
-        self.u_lon = u_lon
-        self.u_data = u_data
-        self.v_lat = v_lat
-        self.v_lon = v_lon
-        self.v_data = v_data
-        print self.u_lat.shape
-        print self.u_lon.shape
-        print self.u_data.shape
-        self.grid_width = 120
-        self.grid_height = 120
         arguments = []
         for kwarg_key in kwgs.keys():
             arguments.append("--%s" % kwarg_key)
             arguments.append(kwgs[kwarg_key])
         (self.options, self.args) = self.parser.parse_args(args=arguments)
-        self.mid_file = os.path.splitext(self.options.exportFile)[0]
-        self.u_mid_file = '%s_u.tif' % self.mid_file
-        self.v_mid_file = '%s_v.tif' % self.mid_file
+        self.options.inputNoData = float(self.options.inputNoData)
+        self.options.gridWidth = int(self.options.gridWidth)
+        self.options.gridHeight = int(self.options.gridHeight)
+        print self.options
+        self.process()
+
+    # 外部调用
+    def outsideParams(self, arguments):
+        self.stopped = False
+        self.optparse_init()
+        (self.options, self.args) = self.parser.parse_args(args=arguments)
+        self.options.inputNoData = float(self.options.inputNoData)
+        self.options.gridWidth = int(self.options.gridWidth)
+        self.options.gridHeight = int(self.options.gridHeight)
         print self.options
         self.process()
 
@@ -51,20 +50,53 @@ class WindJsonUtil():
             dest='exportFile',
             help='export file',
         )
+        p.add_option(
+            '--input_u_file',
+            dest='inputUFile',
+            help='input u wind file',
+        )
+        p.add_option(
+            '--input_v_file',
+            dest='inputVFile',
+            help='input v wind file',
+        )
+        p.add_option(
+            '-t',
+            '--input_data_type',
+            dest='inputDataType',
+            help='input file data type '
+        )
+        p.add_option(
+            '-n',
+            '--input_nodata',
+            dest='inputNoData',
+            help='inout file nodata'
+        )
+        p.add_option(
+            '-w',
+            '--grid_width',
+            dest="gridWidth",
+            help='gdal grid export width'
+        )
+        p.add_option(
+            '--grid_height',
+            dest="gridHeight",
+            help='gdal grid export height'
+        )
         p.set_defaults(
             latOrder="asc",
             dataOrder="asc",
-            nodata=None,
-            cmp="jet",
-            isOpenColorBar=False,
-            axis="off",
-            dpi=80,  # 标准分辨率
+            inputNoData=9999.0,
+            inputDataType="nc",
+            gridWidth=120,
+            gridHeight=120
         )
         self.parser = p
 
     # ==================================================================================================
 
     def process(self):
+        self.readSourceFile()
         print "开始的最大值", np.max(self.u_data)
         print "开始的最小值", np.min(self.u_data)
         startTime = time.time()
@@ -81,6 +113,33 @@ class WindJsonUtil():
         print "makeuvTime", makeuvTime
 
     # ==================================================================================================
+    def readSourceFile(self):
+        myOpenUtils = OpenUtils()
+        myOpenUtils.initParams(
+            self.options.inputUFile,
+            file_type=self.options.inputDataType,
+            data_type='float',
+            nc_values="LAT,LON,WIU10",
+            is_rewirte_data=False,
+            proj="mercator")
+        self.u_lat = myOpenUtils.lats
+        self.u_lon = myOpenUtils.lons
+        self.u_data = myOpenUtils.data[0]
+        myOpenUtils.initParams(
+            self.options.inputVFile,
+            file_type=self.options.inputDataType,
+            data_type='float',
+            nc_values="LAT,LON,WIV10",
+            is_rewirte_data=False,
+            proj="mercator")
+
+        self.v_lat = myOpenUtils.lats
+        self.v_lon = myOpenUtils.lons
+        self.v_data = myOpenUtils.data[0]
+        print self.u_lat.shape
+        print self.u_lon.shape
+        print self.u_data.shape
+
     def stop(self):
         self.stopped = True
 
@@ -111,10 +170,10 @@ class WindJsonUtil():
         print [np.min(self.u_lon), np.min(self.u_lat), np.max(self.u_lon), np.max(self.u_lat)]
         print [np.min(self.u_lon), np.min(self.u_lat), np.max(self.u_lon), np.max(self.u_lat)]
         ds_u = gdal.Grid("", u_polygon.ExportToJson(), \
-                         width=self.grid_width, height=self.grid_height, outputType=gdal.GDT_Float32,
+                         width=self.options.gridWidth, height=self.options.gridHeight, outputType=gdal.GDT_Float32,
                          outputSRS='EPSG:4326',
                          outputBounds=[np.min(self.u_lon), np.min(self.u_lat), np.max(self.u_lon), np.max(self.u_lat)], \
-                         format='MEM', algorithm='nearest', noData=9999.0)
+                         format='MEM', algorithm='nearest', noData=self.options.inputNoData)
         cols_u = ds_u.RasterXSize  # 获取文件的列数
         rows_u = ds_u.RasterYSize  # 获取文件的行数
         currentBand_u = ds_u.GetRasterBand(1)
@@ -127,10 +186,10 @@ class WindJsonUtil():
         del ds_u
         # ===============================
         ds_v = gdal.Grid("", v_polygon.ExportToJson(), \
-                         width=self.grid_width, height=self.grid_height, outputType=gdal.GDT_Float32,
+                         width=self.options.gridWidth, height=self.options.gridHeight, outputType=gdal.GDT_Float32,
                          outputSRS='EPSG:4326',
                          outputBounds=[np.min(self.u_lon), np.min(self.u_lat), np.max(self.u_lon), np.max(self.u_lat)], \
-                         format='MEM', algorithm='nearest', noData=9999.0)
+                         format='MEM', algorithm='nearest', noData=self.options.inputNoData)
         cols_v = ds_v.RasterXSize  # 获取文件的列数
         rows_v = ds_v.RasterYSize  # 获取文件的行数
         currentBand_v = ds_v.GetRasterBand(1)
@@ -150,36 +209,9 @@ class WindJsonUtil():
         lat = np.asarray(lat)
         return (lat, lon)
 
-    def read_mid_data(self):
-        myOpenUtils = OpenUtils()
-        myOpenUtils.initParams(
-            self.u_mid_file,
-            file_type="GeoTiff",
-            data_type='float',
-            is_rewirte_data=False,
-            proj="mercator")
-        self.u_lon = myOpenUtils.lons
-        self.u_lat = myOpenUtils.lats
-        self.u_data = myOpenUtils.data
-        print self.u_data
-        print max(self.u_lon), min(self.u_lon)
-        print max(self.u_lat), min(self.u_lat)
-        myOpenUtils.initParams(
-            self.v_mid_file,
-            file_type="GeoTiff",
-            data_type='float',
-            is_rewirte_data=False,
-            proj="mercator")
-        self.v_lon = myOpenUtils.lons
-        self.v_lat = myOpenUtils.lats
-        self.v_data = myOpenUtils.data
-
-        print max(self.v_lon), min(self.v_lon)
-        print max(self.v_lat), min(self.v_lat)
-
     def makeUVjson(self):
-        dx = float((max(self.u_lon) - min(self.u_lon)) / self.grid_width)
-        dy = float((max(self.u_lat) - min(self.u_lat)) / self.grid_height)
+        dx = float((max(self.u_lon) - min(self.u_lon)) / self.options.gridWidth)
+        dy = float((max(self.u_lat) - min(self.u_lat)) / self.options.gridHeight)
 
         # U=================================================
         u_windJson = {}
@@ -249,3 +281,12 @@ class WindJsonUtil():
         f = open(self.options.exportFile, "w")
         f.write(json.dumps(windjson["json"]))
         f.close()
+
+
+if __name__ == '__main__':
+    startTime = time.time()
+    argv = sys.argv
+    if argv:
+        myLivestatUtils = WindJsonUtil()
+        myLivestatUtils.outsideParams(argv[1:])
+    print "end time ", time.time() - startTime
